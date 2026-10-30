@@ -42,6 +42,10 @@ def test_a_valid_tsconfig_with_comments_and_trailing_commas_gives_its_paths(monk
     ('{"compilerOptions": {"baseUrl": "src\\', "not valid JSON"),
     ('[{"compilerOptions": {}}]', "the top level is not an object"),
     ('{"compilerOptions": null}', "compilerOptions is not an object"),
+    ('{"compilerOptions": {"baseUrl": null}}', "compilerOptions.baseUrl is not a string"),
+    ('{"compilerOptions": {"paths": [["a/*"]]}}', "compilerOptions.paths is not an object of string arrays"),
+    ('{"compilerOptions": {"paths": {"@a/*": "a/*"}}}', "compilerOptions.paths is not an object of string arrays"),
+    ('{"compilerOptions": {"paths": {"@a/*": [1]}}}', "compilerOptions.paths is not an object of string arrays"),
 ])
 def test_a_malformed_tsconfig_is_skipped_with_a_warning(monkeypatch, capsys, tsconfig, reason):
     assert _ts_paths(monkeypatch, tsconfig) == {}

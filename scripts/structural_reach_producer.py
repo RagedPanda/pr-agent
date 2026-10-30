@@ -313,6 +313,15 @@ def ts_compiler_options(name, raw):
     if not isinstance(options, dict):
         warn(f"skipping {name}: compilerOptions is not an object")
         return {}
+    if not isinstance(options.get("baseUrl", "."), str):
+        warn(f"skipping {name}: compilerOptions.baseUrl is not a string")
+        return {}
+    paths = options.get("paths") or {}
+    if not isinstance(paths, dict) or not all(
+        isinstance(targets, list) and all(isinstance(target, str) for target in targets) for targets in paths.values()
+    ):
+        warn(f"skipping {name}: compilerOptions.paths is not an object of string arrays")
+        return {}
     return options
 
 
