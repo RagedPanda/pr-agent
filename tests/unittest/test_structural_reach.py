@@ -327,7 +327,10 @@ def test_prepare_pr_review_drops_model_supplied_row(reach_settings):
     assert "Structural reach" not in markdown
 
 
-@pytest.mark.parametrize("key", ["structural_reach", "Structural_Reach", "STRUCTURAL_REACH"])
+@pytest.mark.parametrize("key", [
+    "structural_reach", "Structural_Reach", "STRUCTURAL_REACH",
+    "structural reach", "Structural-Reach", "structural__reach", "structural.reach", "'structural_reach '",
+])
 def test_prepare_pr_review_drops_a_well_formed_model_row_in_any_case(reach_settings, key):
     review_yaml = (
         "review:\n  relevant_tests: |\n    No\n"
@@ -336,6 +339,7 @@ def test_prepare_pr_review_drops_a_well_formed_model_row_in_any_case(reach_setti
     )
     markdown = _prepare(_reviewer(), review_yaml, [_file("a.ts", "+a")])
     assert "Structural reach" not in markdown
+    assert "999 projects" not in markdown
 
 
 def test_input_file_is_host_only_for_comment_arguments():

@@ -16,6 +16,7 @@ import json
 import posixpath
 import re
 import subprocess
+import sys
 from collections import Counter, deque
 
 from tree_sitter_language_pack import get_parser
@@ -291,11 +292,32 @@ def load_ts_paths(repo, tree):
         if not oid:
             continue
         for _, content in cat_blobs(repo, [oid]):
-            options = loads_jsonc(content.decode("utf-8", "replace")).get("compilerOptions", {})
+            options = ts_compiler_options(name, content.decode("utf-8", "replace"))
             base_url = options.get("baseUrl", ".")
             for pattern, targets in (options.get("paths") or {}).items():
                 paths[pattern] = [posixpath.normpath(posixpath.join(base_url, t)) for t in targets]
     return paths
+
+
+def ts_compiler_options(name, raw):
+    """The compilerOptions object of a tsconfig file, or {} with a warning when the file can't be used."""
+    try:
+        config = loads_jsonc(raw)
+    except ValueError as error:
+        warn(f"skipping {name}: not valid JSON ({error})")
+        return {}
+    if not isinstance(config, dict):
+        warn(f"skipping {name}: the top level is not an object")
+        return {}
+    options = config.get("compilerOptions", {})
+    if not isinstance(options, dict):
+        warn(f"skipping {name}: compilerOptions is not an object")
+        return {}
+    return options
+
+
+def warn(message):
+    print(f"warning: {message}", file=sys.stderr)
 
 
 def load_workspace_aliases(repo, tree):
@@ -360,7 +382,7 @@ def loads_jsonc(raw):
         if in_string:
             out.append(ch)
             if ch == "\\":
-                out.append(raw[i + 1])
+                out.append(raw[i + 1: i + 2])
                 i += 1
             elif ch == '"':
                 in_string = False
@@ -373,7 +395,9 @@ def loads_jsonc(raw):
             continue
         elif raw.startswith("/*", i):
             end = raw.find("*/", i + 2)
-            i = len(raw) if end < 0 else end + 2
+            if end < 0:
+                raise ValueError("unterminated /* comment")
+            i = end + 2
             continue
         else:
             out.append(ch)

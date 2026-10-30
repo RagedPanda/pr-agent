@@ -453,6 +453,12 @@ optional:
 
 Unknown fields are ignored. Strings are limited to 200 characters and the file to 1 MB.
 
+**Trust.** The file is read from inside `GITHUB_WORKSPACE` (or the working directory), so in the GitHub Action a
+checkout of the pull request could already contain a file at that path, written by the pull request's author.
+Generate the file in the same job, right before the review step, and delete any existing copy first. Take the
+project tags and graph configuration the producer reads from the base commit, not from the pull request. Treat the
+band as advisory context for reviewers, never as a merge gate.
+
 **Example producer: Nx.** `nx show projects --affected` lists every project the change affects, including
 transitive dependents. This step writes them as `dependents`, and lists affected projects tagged `sensitive` as
 `sensitive_domains`:

@@ -170,6 +170,11 @@ _STATE_BLOCK_REVIEW_DATA = "review_data"
 _STATE_BLOCK_SIZE = "state_size"
 
 
+def _is_structural_reach_key(key) -> bool:
+    """Whether a review key would render like the deterministic structural reach row, whatever its separators."""
+    return re.sub(r"[^a-z0-9]", "", str(key).lower()) == "structuralreach"
+
+
 class PRReviewer:
     """
     The PRReviewer class is responsible for reviewing a pull request and generating feedback using an AI model.
@@ -1330,7 +1335,7 @@ class PRReviewer:
         if isinstance(data, dict) and isinstance(data.get("review"), dict):
             if not getattr(self, "vars", {}).get("require_failure_modes", False):
                 data["review"].pop("failure_modes", None)
-            for key in [k for k in data["review"] if str(k).lower() == "structural_reach"]:
+            for key in [k for k in data["review"] if _is_structural_reach_key(k)]:
                 data["review"].pop(key)
         if self.prediction_data is None:
             self._validate_review_schema(data)
