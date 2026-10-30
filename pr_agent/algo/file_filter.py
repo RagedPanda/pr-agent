@@ -16,22 +16,24 @@ def filter_ignored(files, platform = 'github'):
 
     try:
         # load regex patterns, and translate glob patterns to regex
-        raw_patterns = get_settings().ignore.regex
-        patterns = [raw_patterns] if isinstance(raw_patterns, str) else list(raw_patterns)
+        patterns = _setting_as_list(get_settings().ignore.regex, 'ignore.regex')
         glob_setting = get_settings().ignore.glob
         if isinstance(glob_setting, str):  # --ignore.glob=[.*utils.py], --ignore.glob=.*utils.py
             glob_setting = split_glob_patterns(glob_setting)
-        patterns += translate_globs_to_regexes(glob_setting)
+        patterns += translate_globs_to_regexes(_setting_as_list(glob_setting, 'ignore.glob'))
 
         code_generators = get_settings().config.get('ignore_language_framework', [])
         if isinstance(code_generators, str):
             get_logger().warning("'ignore_language_framework' should be a list. Skipping language framework filtering.")
             code_generators = []
-        for cg in code_generators:
+        for cg in _setting_as_list(code_generators, 'config.ignore_language_framework'):
+            if not isinstance(cg, str):
+                get_logger().warning(
+                    "Skipping non-string 'ignore_language_framework' entry; expected a string. "
+                    "Other ignore rules still apply", artifact={"type": type(cg).__name__})
+                continue
             glob_patterns = get_settings().generated_code.get(cg, [])
-            if isinstance(glob_patterns, str):
-                glob_patterns = [glob_patterns]
-            patterns += translate_globs_to_regexes(glob_patterns)
+            patterns += translate_globs_to_regexes(_setting_as_list(glob_patterns, f'generated_code.{cg}'))
 
         # compile all valid patterns
         compiled_patterns = []
@@ -106,6 +108,22 @@ def filter_ignored(files, platform = 'github'):
             f'contain files that the [ignore] rules should have excluded. {e}')
 
     return files
+
+
+def _setting_as_list(value, setting_name: str) -> list:
+    """Return a string or list ignore setting as a list.
+
+    Any other value (``42``, ``None``, a table) is dropped with a warning, so the
+    remaining ignore rules still apply instead of the whole filter pass failing.
+    """
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    get_logger().warning(
+        f"Skipping '{setting_name}'; expected a string or a list of strings. Other ignore rules still apply",
+        artifact={"setting": setting_name, "type": type(value).__name__})
+    return []
 
 
 def split_glob_patterns(value: str) -> list[str]:
