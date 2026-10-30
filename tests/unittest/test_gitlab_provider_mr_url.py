@@ -207,3 +207,15 @@ def test_parse_merge_request_url_of_a_project_named_merge_requests():
 def test_parse_merge_request_url_rejects_an_issue_of_a_project_named_merge_requests():
     with pytest.raises(ValueError):
         _provider()._parse_merge_request_url("https://gitlab.example.com/grp/merge_requests/-/issues/5")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gitlab.example.com/grp/my-issues/merge_requests/42/diffs",
+        "https://gitlab.example.com/grp/my-issues/-/merge_requests/42/diffs",
+    ],
+)
+def test_merge_request_url_with_a_tab_suffix(url):
+    assert _provider()._parse_merge_request_url(url) == ("grp/my-issues", 42)
+    assert _provider().get_git_repo_url(url) == "https://gitlab.example.com/grp/my-issues.git"

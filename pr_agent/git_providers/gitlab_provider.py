@@ -733,15 +733,16 @@ class GitLabProvider(GitProvider):
         """Index of the resource segment (``merge_requests``, ``issues``) of a project URL path.
 
         GitLab puts it right after the ``/-/`` separator, which cannot be a group or project name;
-        older URLs without the separator end in ``<resource>/<id>``. Matching the segment rather than
-        a substring keeps a project such as ``grp/my-issues`` from being read as an issue.
+        older URLs without the separator have ``<resource>/<id>`` after the project, optionally followed
+        by a tab such as ``/diffs``. Matching the segment rather than a substring keeps a project such
+        as ``grp/my-issues`` from being read as an issue.
         """
         if '-' in path_parts:
             resource_index = path_parts.index('-') + 1
             return resource_index if resource_index < len(path_parts) else None
-        if len(path_parts) >= 2 and path_parts[-1].isdigit():
-            return len(path_parts) - 2
-        return None
+        legacy_indexes = [index for index, part in enumerate(path_parts[:-1])
+                          if part in ('merge_requests', 'issues') and path_parts[index + 1].isdigit()]
+        return legacy_indexes[-1] if legacy_indexes else None
 
     def _get_project_path_from_pr_or_issue_url(self, pr_or_issue_url: str) -> str:
         repo_project_path = None
@@ -2597,8 +2598,6 @@ class GitLabProvider(GitProvider):
         resource_index = self._url_resource_index(path_parts)
         if resource_index is not None and path_parts[resource_index] == 'merge_requests':
             mr_index = resource_index
-        elif '-' not in path_parts and 'merge_requests' in path_parts:
-            mr_index = path_parts.index('merge_requests')
         else:
             raise ValueError("The provided URL does not appear to be a GitLab merge request URL")
         # Ensure there is an ID after 'merge_requests'
