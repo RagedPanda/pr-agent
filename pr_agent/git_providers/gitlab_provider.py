@@ -728,13 +728,33 @@ class GitLabProvider(GitProvider):
     def supports_issue_reference_tickets(self) -> bool:
         return True
 
+    @staticmethod
+    def _url_resource_index(path_parts: list[str]) -> int | None:
+        """Index of the resource segment (``merge_requests``, ``issues``) of a project URL path.
+
+        GitLab puts it right after the ``/-/`` separator, which cannot be a group or project name;
+        older URLs without the separator end in ``<resource>/<id>``. Matching the segment rather than
+        a substring keeps a project such as ``grp/my-issues`` from being read as an issue.
+        """
+        if '-' in path_parts:
+            resource_index = path_parts.index('-') + 1
+            return resource_index if resource_index < len(path_parts) else None
+        if len(path_parts) >= 2 and path_parts[-1].isdigit():
+            return len(path_parts) - 2
+        return None
+
     def _get_project_path_from_pr_or_issue_url(self, pr_or_issue_url: str) -> str:
         repo_project_path = None
-        if 'issues' in pr_or_issue_url:
-            #replace 'issues' with 'merge_requests', since gitlab provider does not support issue urls,
-            # just to get the git repo url:
-            pr_or_issue_url = pr_or_issue_url.replace('issues', 'merge_requests')
-        if 'merge_requests' in pr_or_issue_url:
+        parsed_url = urlparse(pr_or_issue_url)
+        path_parts = parsed_url.path.strip('/').split('/')
+        resource_index = self._url_resource_index(path_parts)
+        resource = path_parts[resource_index] if resource_index is not None else ""
+        if resource == 'issues':
+            # gitlab provider does not support issue urls, so read the project path
+            # from the matching merge request url, just to get the git repo url:
+            path_parts[resource_index] = 'merge_requests'
+            pr_or_issue_url = parsed_url._replace(path='/' + '/'.join(path_parts)).geturl()
+        if resource in ('issues', 'merge_requests'):
             repo_project_path, _ = self._parse_merge_request_url(pr_or_issue_url)
         if not repo_project_path:
             get_logger().error(f"url is not a valid merge requests url: {pr_or_issue_url}")
@@ -742,12 +762,17 @@ class GitLabProvider(GitProvider):
         return repo_project_path
 
     def get_git_repo_url(self, issues_or_pr_url: str) -> str:
-        provider_url = issues_or_pr_url
-        repo_path = self._get_project_path_from_pr_or_issue_url(provider_url)
-        if not repo_path or repo_path not in issues_or_pr_url:
+        repo_path = self._get_project_path_from_pr_or_issue_url(issues_or_pr_url)
+        parsed_url = urlparse(issues_or_pr_url)
+        path_parts = parsed_url.path.strip('/').split('/')
+        resource_index = self._url_resource_index(path_parts)
+        if not repo_path or resource_index is None:
             get_logger().error(f"Unable to retrieve project path from url: {issues_or_pr_url}")
             return ""
-        return f"{issues_or_pr_url.split(repo_path)[0]}{repo_path}.git"
+        project_parts = path_parts[:resource_index]
+        if project_parts[-1:] == ['-']:
+            project_parts = project_parts[:-1]
+        return f"{parsed_url.scheme}://{parsed_url.netloc}/{'/'.join(project_parts)}.git"
 
     # Given a git repo url, return prefix and suffix of the provider in order to view
     # a given file belonging to that repo.
@@ -2569,10 +2594,13 @@ class GitLabProvider(GitProvider):
         if same_host and base_path_parts and path_parts[:len(base_path_parts)] == base_path_parts:
             path_parts = path_parts[len(base_path_parts):]
 
-        if 'merge_requests' not in path_parts:
+        resource_index = self._url_resource_index(path_parts)
+        if resource_index is not None and path_parts[resource_index] == 'merge_requests':
+            mr_index = resource_index
+        elif '-' not in path_parts and 'merge_requests' in path_parts:
+            mr_index = path_parts.index('merge_requests')
+        else:
             raise ValueError("The provided URL does not appear to be a GitLab merge request URL")
-
-        mr_index = path_parts.index('merge_requests')
         # Ensure there is an ID after 'merge_requests'
         if len(path_parts) <= mr_index + 1:
             raise ValueError("The provided URL does not contain a merge request ID")

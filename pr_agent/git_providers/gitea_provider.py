@@ -139,7 +139,9 @@ class GiteaProvider(GitProvider):
         self.last_commit = None
         self.last_commit_id = None
 
-        if "pulls" in url:
+        url_path_parts = self._url_path_parts(url)
+        resource = url_path_parts[2] if len(url_path_parts) > 2 else ""
+        if resource == "pulls":
             self.pr_url = url
             self.__set_repo_and_owner_from_pr()
             self.enabled_pr = True
@@ -153,7 +155,7 @@ class GiteaProvider(GitProvider):
             self.last_commit_id = self.last_commit
             self.base_sha = self.pr.base.sha or ""
             self.base_ref = self.pr.base.ref or ""
-        elif "issues" in url:
+        elif resource == "issues":
             self.issue_url = url
             self.__set_repo_and_owner_from_issue()
             self.enabled_issue = True
