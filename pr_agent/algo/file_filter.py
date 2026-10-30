@@ -1,5 +1,6 @@
 import fnmatch
 import re
+from collections.abc import Mapping
 
 from pr_agent.config_loader import get_settings
 from pr_agent.log import get_logger
@@ -13,32 +14,49 @@ _MAX_GLOB_LENGTH = 1024
 
 def filter_ignored(files, platform = 'github'):
     """Filter out files that match the ignore patterns."""
+    return filter_ignored_with_status(files, platform)[0]
 
+
+def filter_ignored_with_status(files, platform='github'):
+    """Return the best-effort file list and whether all ignore rules were evaluated."""
+    complete = platform in (
+        'github', 'codecommit', 'local', 'plain_diff', 'mosaico', 'bitbucket',
+        'bitbucket_server', 'gitlab', 'azure', 'gitea', 'gerrit',
+    )
     try:
         # load regex patterns, and translate glob patterns to regex
-        patterns = _setting_as_list(get_settings().ignore.regex, 'ignore.regex')
+        patterns, regex_complete = _setting_as_list(get_settings().ignore.regex, 'ignore.regex')
         glob_setting = get_settings().ignore.glob
         if isinstance(glob_setting, str):  # --ignore.glob=[.*utils.py], --ignore.glob=.*utils.py
             glob_setting = split_glob_patterns(glob_setting)
-        patterns += translate_globs_to_regexes(_setting_as_list(glob_setting, 'ignore.glob'))
+        glob_list, glob_setting_complete = _setting_as_list(glob_setting, 'ignore.glob')
+        glob_patterns, glob_complete = _translate_globs_to_regexes_with_status(glob_list)
+        patterns += glob_patterns
+        complete = complete and regex_complete and glob_setting_complete and glob_complete
 
         code_generators = get_settings().config.get('ignore_language_framework', [])
+        if not isinstance(code_generators, (list, tuple)):
+            complete = False
         if isinstance(code_generators, str):
             get_logger().warning("'ignore_language_framework' should be a list. Skipping language framework filtering.")
             code_generators = []
-        for cg in _setting_as_list(code_generators, 'config.ignore_language_framework'):
+        code_generators, generators_complete = _setting_as_list(code_generators, 'config.ignore_language_framework')
+        complete = complete and generators_complete
+        for cg in code_generators:
             if not isinstance(cg, str):
-                get_logger().warning(
-                    "Skipping non-string 'ignore_language_framework' entry; expected a string. "
-                    "Other ignore rules still apply", artifact={"type": type(cg).__name__})
+                complete = False
                 continue
-            glob_patterns = get_settings().generated_code.get(cg, [])
-            patterns += translate_globs_to_regexes(_setting_as_list(glob_patterns, f'generated_code.{cg}'))
+            glob_list, glob_setting_complete = _setting_as_list(
+                get_settings().generated_code.get(cg, []), f'generated_code.{cg}')
+            generated_patterns, generated_complete = _translate_globs_to_regexes_with_status(glob_list)
+            patterns += generated_patterns
+            complete = complete and glob_setting_complete and generated_complete
 
         # compile all valid patterns
         compiled_patterns = []
         for r in patterns:
             if not isinstance(r, str):
+                complete = False
                 get_logger().warning(
                     "Skipping non-string ignore regex; expected a string. Other ignore rules still apply",
                     artifact={"type": type(r).__name__})
@@ -46,6 +64,7 @@ def filter_ignored(files, platform = 'github'):
             try:
                 compiled_patterns.append(re.compile(r))
             except re.error as e:
+                complete = False
                 get_logger().warning(
                     "Skipping invalid ignore pattern; files it was meant to exclude will be "
                     "sent to the model", artifact={"pattern": r, "error": str(e)})
@@ -58,7 +77,7 @@ def filter_ignored(files, platform = 'github'):
         # keep filenames that _don't_ match the ignore regex
         if files:
             for r in compiled_patterns:
-                if platform in ('github', 'codecommit', 'local', 'plain_diff'):
+                if platform in ('github', 'codecommit', 'local', 'plain_diff', 'mosaico'):
                     files = [f for f in files if (f.filename and not r.match(f.filename))]
                 elif platform == 'bitbucket':
                     files_o = []
@@ -103,27 +122,31 @@ def filter_ignored(files, platform = 'github'):
 
 
     except Exception as e:
+        complete = False
         get_logger().error(
             f'Could not filter file list; filtering did not complete, so the returned list may still '
             f'contain files that the [ignore] rules should have excluded. {e}')
 
-    return files
+    return files, complete
 
 
-def _setting_as_list(value, setting_name: str) -> list:
-    """Return a string or list ignore setting as a list.
+def _setting_as_list(value, setting_name: str) -> tuple[list, bool]:
+    """Return an ignore setting as a list, and whether it had the expected type.
 
-    Any other value (``42``, ``None``, a table) is dropped with a warning, so the
-    remaining ignore rules still apply instead of the whole filter pass failing.
+    A string or a list is used as is. A table keeps its keys but is reported as
+    incomplete. Any other value (``42``, ``None``) is dropped with a warning, so
+    the remaining ignore rules still apply instead of the whole filter pass failing.
     """
     if isinstance(value, str):
-        return [value]
+        return [value], True
     if isinstance(value, (list, tuple)):
-        return list(value)
+        return list(value), True
+    if isinstance(value, Mapping):
+        return list(value), False
     get_logger().warning(
         f"Skipping '{setting_name}'; expected a string or a list of strings. Other ignore rules still apply",
         artifact={"setting": setting_name, "type": type(value).__name__})
-    return []
+    return [], False
 
 
 def split_glob_patterns(value: str) -> list[str]:
@@ -181,12 +204,19 @@ def _globstar_offsets(pattern: str) -> list[int]:
 
 def translate_globs_to_regexes(globs: list):
     """Expand standalone ``**/`` segments into separate zero-directory translations."""
+    return _translate_globs_to_regexes_with_status(globs)[0]
+
+
+def _translate_globs_to_regexes_with_status(globs: list):
+    """Translate globs without hiding bounded omissions from metadata callers."""
+    complete = not isinstance(globs, Mapping)
     regexes = {}
     expandable = []
     seen = set()
     skipped = skipped_long = variants = 0
     for pattern in globs:
         if not isinstance(pattern, str):
+            complete = False
             get_logger().warning(
                 "Skipping non-string ignore glob; expected a string. Other ignore rules still apply",
                 artifact={"type": type(pattern).__name__})
@@ -230,4 +260,4 @@ def translate_globs_to_regexes(globs: list):
         get_logger().warning(
             f"Skipped {skipped_long} ignore glob(s) longer than {_MAX_GLOB_LENGTH} characters",
             artifact={"globs": skipped_long, "max_length": _MAX_GLOB_LENGTH})
-    return list(regexes)
+    return list(regexes), complete and not (skipped or skipped_long)

@@ -4,7 +4,7 @@ import io
 
 import pytest
 
-from pr_agent.algo.file_filter import filter_ignored, translate_globs_to_regexes
+from pr_agent.algo.file_filter import filter_ignored, filter_ignored_with_status, translate_globs_to_regexes
 from pr_agent.config_loader import get_settings
 from pr_agent.log import get_logger
 
@@ -99,7 +99,7 @@ def test_non_string_generated_code_globs_do_not_disable_other_rules(restore_igno
 
 
 @pytest.mark.parametrize("setting", ["regex", "glob"])
-@pytest.mark.parametrize("invalid", [42, False, None, {"pattern": "*.py"}])
+@pytest.mark.parametrize("invalid", [42, False, None])
 def test_a_non_list_setting_does_not_disable_the_other_ignore_rules(restore_ignore, setting, invalid):
     restore_ignore.set("ignore.regex", [r"^vendor/"])
     restore_ignore.set("ignore.glob", ["*.lock"])
@@ -107,10 +107,12 @@ def test_a_non_list_setting_does_not_disable_the_other_ignore_rules(restore_igno
     files = [_File("vendor/lib.py"), _File("deps.lock"), _File("app.py")]
     result = []
 
-    logged = _capture(lambda: result.extend(filter_ignored(files)))
+    logged = _capture(lambda: result.append(filter_ignored_with_status(files)))
 
+    kept, complete = result[0]
     expected = ["vendor/lib.py", "app.py"] if setting == "regex" else ["deps.lock", "app.py"]
-    assert [f.filename for f in result] == expected
+    assert [f.filename for f in kept] == expected
+    assert complete is False
     assert f"Skipping 'ignore.{setting}'" in logged
     assert "Could not filter file list" not in logged
 
@@ -131,9 +133,11 @@ def test_a_non_list_generated_code_setting_does_not_disable_other_rules(
     files = [_File("vendor/lib.py"), _File("deps.lock"), _File("api_pb2.py"), _File("app.py")]
     result = []
 
-    logged = _capture(lambda: result.extend(filter_ignored(files)))
+    logged = _capture(lambda: result.append(filter_ignored_with_status(files)))
 
-    kept = [f.filename for f in result]
+    kept_files, complete = result[0]
+    kept = [f.filename for f in kept_files]
+    assert complete is False
     assert "vendor/lib.py" not in kept and "deps.lock" not in kept and "app.py" in kept
     assert ("api_pb2.py" in kept) == (protobuf_globs == 42 or frameworks == 42)
     assert "Could not filter file list" not in logged
